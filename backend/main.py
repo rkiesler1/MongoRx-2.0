@@ -1,25 +1,36 @@
 import uvicorn
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
+from fastapi.middleware.gzip import GZipMiddleware
+
 from motor.motor_asyncio import AsyncIOMotorClient
 
-from apps.todo.routers import router as todo_router
+from apps.trials.routers import trial_router, drug_router
 from config import settings
 
-app = FastAPI()
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    try:
+        await startup_db_client()
+        yield
+    finally:
+        await shutdown_db_client()
+        
+app = FastAPI(lifespan=lifespan)
+app.add_middleware(GZipMiddleware, minimum_size=1000, compresslevel=5)
 
-
-@app.on_event("startup")
+#@app.on_event("startup")
 async def startup_db_client():
     app.mongodb_client = AsyncIOMotorClient(settings.DB_URL)
     app.mongodb = app.mongodb_client[settings.DB_NAME]
 
-
-@app.on_event("shutdown")
+#@app.on_event("shutdown")
 async def shutdown_db_client():
     app.mongodb_client.close()
 
 
-app.include_router(todo_router, tags=["tasks"], prefix="/task")
+app.include_router(trial_router, tags=["trials"], prefix="/trials")
+app.include_router(drug_router, tags=["drugs"], prefix="/drugs")
 
 if __name__ == "__main__":
     uvicorn.run(
