@@ -1,3 +1,4 @@
 export DEBUG_MODE=
 export DB_URL=
 export DB_NAME=
+export OPENAI_API_KEY=

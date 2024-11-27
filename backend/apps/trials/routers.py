@@ -52,9 +52,14 @@ fuzzy = {
 }
 
 @trial_router.get("/", response_description="List all trials")
-async def list_trials(request: Request):
-    trials = await request.app.mongodb["trials"].find(
-        {}, trial_project['$project']).to_list(length=100)
+async def list_trials(
+    request: Request,
+    limit: Optional[int] = 100,
+    skip: Optional[int] = 0,
+    sort: Optional[str] = None,
+    sort_order: Optional[int] = 1):
+
+    trials = await search_trials(request, limit=limit, skip=skip, sort=sort, sort_order=sort_order, filters=None)
     return trials
 
 @trial_router.get("/{nct_id}", response_description="Get a single trial")
@@ -77,7 +82,7 @@ async def show_trial(nct_id: str, request: Request):
 @trial_router.post("/autocomplete", response_description="Autocomplete search for trials")
 async def autocomplete_trials(
     request: Request,
-    term: Optional[str] = None,
+    term: str,
     limit: Optional[int] = 5,
     skip: Optional[int] = 0):
 
@@ -130,9 +135,9 @@ async def search_trials(
     request: Request,
     term: Optional[str] = None,
     limit: Optional[int] = 100,
-    skip: Optional[int] = None,
+    skip: Optional[int] = 0,
     sort: Optional[str] = None,
-    sort_order: Optional[int] = None,
+    sort_order: Optional[int] = 1,
     use_vector: Optional[bool] = False,
     num_candidates: Optional[int] = 100,
     pagination_token: Optional[str] = None,
@@ -288,8 +293,15 @@ async def search_trials(
                 pipeline.append(basic_search)
             pipeline.append({'$limit': limit})
     
-    pipeline.append(add_fields)
-    pipeline.append(trial_project)
+    # sorting
+    if (sort != None and use_vector == False):
+        pipeline[0]['$search']['sort'] = { sort: sort_order }
+    
+    if skip > 0:
+        pipeline.append({'$skip': skip})
+
+    pipeline.extend([add_fields, trial_project])
+    print(pipeline)
 
     trials = await request.app.mongodb["trials"].aggregate(pipeline).to_list(length=100)
 
@@ -383,9 +395,9 @@ drug_project = {
         'id': 1,
         'indications_and_usage': 1,
         'purpose': 1,
-        'brand_name': '$openfda.brand_name',
-        'generic_name': '$openfda.generic_name',
-        'manufacturer_name': '$openfda.manufacturer_name'
+        'openfda.brand_name': 1,
+        'openfda.generic_name': 1,
+        'openfda.manufacturer_name': 1,
     }
 }
 
@@ -399,11 +411,14 @@ drug_autocomplete_project = {
 }
 
 @drug_router.get("/", response_description="List all drugs")
-async def list_drugs(request: Request):
-    drugs = []
-    for doc in await request.app.mongodb["drug_data"].find(
-        {}, {'_id': 0}).to_list(length=100):
-        drugs.append(doc)
+async def list_drugs(
+    request: Request,
+    limit: Optional[int] = 100,
+    skip: Optional[int] = None,
+    sort: Optional[str] = None,
+    sort_order: Optional[int] = 1):
+
+    drugs = await search_drugs(request, limit=limit, skip=skip, sort=sort, sort_order=sort_order, filters=None)
     return drugs
 
 @drug_router.get("/{uuid}", response_description="Get a single drug")
@@ -414,11 +429,11 @@ async def show_drug(uuid: str, request: Request):
     raise HTTPException(status_code=404, detail=f"Drug {uuid} not found")
 
 @drug_router.post("/", response_description="Search for drugs")
-async def search_trials(
+async def search_drugs(
     request: Request,
     term: Optional[str] = None,
     limit: Optional[int] = 100,
-    skip: Optional[int] = None,
+    skip: Optional[int] = 0,
     sort: Optional[str] = None,
     sort_order: Optional[int] = None,
     pagination_token: Optional[str] = None,
@@ -538,22 +553,28 @@ async def search_trials(
         else:
             pipeline.append(basic_search)
 
-    pipeline.append({'$limit': limit})
-    pipeline.append(add_fields)
-    pipeline.append(drug_project)
-    print(pipeline)
+    # sorting
+    if (sort != None):
+        sort_order = 1 if sort_order == None else sort_order
+        pipeline[0]['$search']['sort'] = { sort: sort_order }
+
+    if skip > 0:
+        pipeline.append({'$skip': skip})
+        
+    pipeline.extend([{'$limit': limit}, add_fields, drug_project])
+    #print(pipeline)
 
     drugs = await request.app.mongodb["drug_data"].aggregate(pipeline).to_list(length=100)
 
     return drugs
 
 @drug_router.post("/autocomplete", response_description="Autocomplete search for drugs")
-async def autocomplete_trials(
+async def autocomplete_drugs(
     request: Request,
-    term: Optional[str] = None,
+    term: str,
     limit: Optional[int] = 5,
     skip: Optional[int] = 0):
-  
+      
     autocomplete_search  = {
         '$search': {
             'index': 'drugs',

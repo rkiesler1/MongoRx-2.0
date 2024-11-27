@@ -1,7 +1,14 @@
 # API Server
 fastapi
+contextlib2
 uvicorn[standard]
 pydantic[email]
+pydantic-settings
+
+# GenAI
+openai
+pytorch
+sentence-transformers
 
 # Database
 motor

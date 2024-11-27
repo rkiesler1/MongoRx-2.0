@@ -2,12 +2,14 @@
 __pycache__/
 *.py[cod]
 *$py.class
+__init__.py
 
 # venv
 bin/
 include/
 lib/
 share/
+pyvenv.cfg
 
 # C extensions
 *.so
@@ -137,3 +139,6 @@ dmypy.json
 # Dev Settings
 .envrc
 .vscode
+
+# Misc
+.DS_Store

@@ -2,7 +2,7 @@ from pydantic_settings import BaseSettings
 
 
 class CommonSettings(BaseSettings):
-    APP_NAME: str = "FARM Starter"
+    APP_NAME: str = "MongoRx"
     DEBUG_MODE: bool = False
 
 
