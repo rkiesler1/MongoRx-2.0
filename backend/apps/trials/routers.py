@@ -56,10 +56,18 @@ async def list_trials(
     request: Request,
     limit: Optional[int] = 100,
     skip: Optional[int] = 0,
+    pagination_token: Optional[str] = None,
     sort: Optional[str] = None,
     sort_order: Optional[int] = 1):
 
-    trials = await search_trials(request, limit=limit, skip=skip, sort=sort, sort_order=sort_order, filters=None)
+    trials = await search_trials(
+        request,
+        limit=limit,
+        skip=skip,
+        sort=sort,
+        sort_order=sort_order,
+        pagination_token=pagination_token,
+        filters=None)
     return trials
 
 @trial_router.get("/{nct_id}", response_description="Get a single trial")
@@ -127,7 +135,7 @@ async def autocomplete_trials(
     if nct:
         pipeline.append(title_override)
   
-    trials = await request.app.mongodb["trials"].aggregate(pipeline).to_list(length=100)
+    trials = await request.app.mongodb["trials"].aggregate(pipeline).to_list(length=limit)
     return trials
 
 @trial_router.post("/", response_description="Search for trials")
@@ -136,11 +144,11 @@ async def search_trials(
     term: Optional[str] = None,
     limit: Optional[int] = 100,
     skip: Optional[int] = 0,
+    pagination_token: Optional[str] = None,
     sort: Optional[str] = None,
     sort_order: Optional[int] = 1,
     use_vector: Optional[bool] = False,
-    num_candidates: Optional[int] = 100,
-    pagination_token: Optional[str] = None,
+    num_candidates: Optional[int] = 1000,
     filters: Optional[List[str]] = Query(None)):
     basic_search_no_term = {
         '$search': {
@@ -297,13 +305,16 @@ async def search_trials(
     if (sort != None and use_vector == False):
         pipeline[0]['$search']['sort'] = { sort: sort_order }
     
-    if skip > 0:
+    # pagination
+    if pagination_token != None:
+        pipeline[0]['$search']['searchAfter'] = pagination_token
+    elif skip and skip > 0:
         pipeline.append({'$skip': skip})
 
     pipeline.extend([add_fields, trial_project])
     print(pipeline)
 
-    trials = await request.app.mongodb["trials"].aggregate(pipeline).to_list(length=100)
+    trials = await request.app.mongodb["trials"].aggregate(pipeline).to_list(length=limit)
 
     return trials
 
@@ -398,6 +409,7 @@ drug_project = {
         'openfda.brand_name': 1,
         'openfda.generic_name': 1,
         'openfda.manufacturer_name': 1,
+        'trial_pagination_token': 1,
     }
 }
 
@@ -415,10 +427,18 @@ async def list_drugs(
     request: Request,
     limit: Optional[int] = 100,
     skip: Optional[int] = None,
+    pagination_token: Optional[str] = None,
     sort: Optional[str] = None,
     sort_order: Optional[int] = 1):
 
-    drugs = await search_drugs(request, limit=limit, skip=skip, sort=sort, sort_order=sort_order, filters=None)
+    drugs = await search_drugs(
+        request,
+        limit=limit,
+        skip=skip,
+        pagination_token=pagination_token,
+        sort=sort,
+        sort_order=sort_order,
+        filters=None)
     return drugs
 
 @drug_router.get("/{uuid}", response_description="Get a single drug")
@@ -536,6 +556,7 @@ async def search_drugs(
         '$addFields': {
             'score': {'$meta': 'searchScore'},
             'highlights': {'$meta': 'searchHighlights'},
+            'trial_pagination_token': {'$meta' : 'searchSequenceToken'},
             'count': "$$SEARCH_META.count"
         }
     }
@@ -558,13 +579,16 @@ async def search_drugs(
         sort_order = 1 if sort_order == None else sort_order
         pipeline[0]['$search']['sort'] = { sort: sort_order }
 
-    if skip > 0:
+    # pagination
+    if pagination_token != None:
+        pipeline[0]['$search']['searchAfter'] = pagination_token
+    elif skip and skip > 0:
         pipeline.append({'$skip': skip})
         
     pipeline.extend([{'$limit': limit}, add_fields, drug_project])
     #print(pipeline)
 
-    drugs = await request.app.mongodb["drug_data"].aggregate(pipeline).to_list(length=100)
+    drugs = await request.app.mongodb["drug_data"].aggregate(pipeline).to_list(length=limit)
 
     return drugs
 
@@ -597,5 +621,5 @@ async def autocomplete_drugs(
         },
         drug_autocomplete_project]
 
-    trials = await request.app.mongodb["drug_data"].aggregate(pipeline).to_list(length=100)
+    trials = await request.app.mongodb["drug_data"].aggregate(pipeline).to_list(length=limit)
     return trials
