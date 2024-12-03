@@ -318,6 +318,199 @@ async def search_trials(
 
     return trials
 
+@trial_router.post("/facets", response_description="Facet search for trials")
+async def search_trial_facets(
+    request: Request,
+    term: Optional[str] = None,
+    filters: Optional[List[str]] = Query(None),
+    count_only: Optional[bool] = False,
+    use_vector: Optional[bool] = False):
+    
+    default_filter_field = filters[0].split(":")[0] if filters != None and len(filters) > 0 else ""
+    query_string = await filters_to_query_string(filters)
+    range_query = await filters_to_range_query(filters, use_vector)
+
+    count_all_facets = {
+        '$searchMeta': {
+            'index': 'default',
+            'exists': { 'path': 'nct_id' },
+            'count': { 'type': 'total' },
+        }
+    }
+
+    count_facets_with_filters = {
+        '$searchMeta': {
+            'compound': {
+                'filter': [{
+                    'queryString': {
+                        'defaultPath': default_filter_field,
+                        'query': query_string
+                    }
+                }]
+            },
+            'count': { 'type': 'total' }
+        }
+    }
+
+    facets_object = {
+        'conditions': {
+            'type': 'string',
+            'path': 'condition',
+            'numBuckets': 10
+        },
+        'intervention_types': {
+            'type': 'string',
+            'path': 'intervention',
+            'numBuckets': 10
+        },
+        'interventions': {
+            'type': 'string',
+            'path': 'intervention_mesh_term',
+            'numBuckets': 10
+        },
+        'genders': {
+            'type': 'string',
+            'path': 'gender',
+            'numBuckets': 10
+        },
+        'sponsors': {
+            'type': 'string',
+            'path': 'sponsors.agency',
+            'numBuckets': 10
+        },
+        'start_date': {
+            'type': 'date',
+            'path': 'start_date',
+            'boundaries': [
+                datetime.fromisoformat('2012-01-01'),
+                datetime.fromisoformat('2013-01-01'),
+                datetime.fromisoformat('2014-01-01'),
+                datetime.fromisoformat('2015-01-01'),
+                datetime.fromisoformat('2016-01-01'),
+                datetime.fromisoformat('2017-01-01'),
+                datetime.fromisoformat('2018-01-01'),
+                datetime.fromisoformat('2019-01-01'),
+                datetime.fromisoformat('2020-01-01'),
+                datetime.fromisoformat('2021-01-01'),
+                datetime.fromisoformat('2022-01-01'),
+                datetime.fromisoformat('2023-01-01'),
+                datetime.fromisoformat('2024-01-01'),
+            ],
+            'default': 'other'
+        }
+    }
+
+    basic_facets_no_term = {
+        '$searchMeta': {
+            'index': 'default',
+            'facet': {
+                'facets': facets_object
+            }
+        }
+    }
+
+    compound_operator = { 'compound': {} }
+
+    if query_string and len(query_string) > 0:
+        compound_operator.compound.filter = [{
+            'queryString': {
+                'defaultPath': default_filter_field,
+                'query': query_string
+            }
+        }]
+
+    if term and len(term) > 0:
+        compound_operator.compound.must = [{
+            'text': {
+                'query': term,
+                'path': [
+                    'brief_title',
+                    'official_title',
+                    'brief_summary',
+                    'detailed_description'
+                ]
+            }
+        }]
+
+    if range_query:
+        if compound_operator.compound.filter and len(compound_operator.compound.filter) > 0:
+            compound_operator.compound.filter.append(range_query)
+        else:
+            compound_operator.compound.filter = [range_query]
+
+    search_facets_with_filters = {
+        '$searchMeta': {
+            'index': 'default',
+            'facet': {
+                'operator': compound_operator,
+                'facets': facets_object
+            }
+        }
+    }
+
+    add_dields = {
+        '$addFields': { 'count': '$$SEARCH_META.count' }
+    }
+
+    pipeline = []
+
+    if count_only:
+        if query_string and len(query_string.strip()) > 0:
+            # filters provided
+            print("count only: filters provided")
+            pipeline.append(count_facets_with_filters)
+        else:
+            # no filters provided
+            print("count only: no filters provided")
+            pipeline.append(count_all_facets)
+    elif term and len(term.strip()) > 0:
+        # search term provided
+        # TODO: add vector support for facets
+        print("not count only: use search facets")
+        pipeline.append(search_facets_with_filters)
+    elif query_string and len(query_string.strip()) > 0:
+        print("not count only *")
+        # filters provided
+        pipeline.append(search_facets_with_filters)
+    else:
+        print("not count only basic");
+        # no search term or filters provided
+        pipeline.append(basic_facets_no_term)
+
+    #print(pipeline)
+
+    facets = await request.app.mongodb["trials"].aggregate(pipeline).to_list()
+
+    if not count_only:
+        # reformat for easier consumption
+        buckets = facets[0]['facet']['conditions']['buckets']
+        conditions = list(map(lambda bucket: {'name': bucket['_id'], 'count': bucket['count']}, buckets))
+    
+        buckets = facets[0]['facet']['intervention_types']['buckets']
+        intervention_types = list(map(lambda bucket: {'name': bucket['_id'], 'count': bucket['count']}, buckets))
+
+        buckets = facets[0]['facet']['interventions']['buckets']
+        interventions = list(map(lambda bucket: {'name': bucket['_id'], 'count': bucket['count']}, buckets))
+
+        buckets = facets[0]['facet']['sponsors']['buckets']
+        sponsors = list(map(lambda bucket: {'name': bucket['_id'], 'count': bucket['count']}, buckets))
+
+        buckets = facets[0]['facet']['genders']['buckets']
+        genders = list(map(lambda bucket: {'name': bucket['_id'], 'count': bucket['count']}, buckets))
+
+        buckets = facets[0]['facet']['start_date']['buckets']
+        sdates = list(map(lambda bucket: {'name': bucket['_id'], 'count': bucket['count']}, buckets))
+  
+        facets[0]['conditions'] = conditions
+        facets[0]['intervention_types'] = intervention_types
+        facets[0]['interventions'] = interventions
+        facets[0]['sponsors'] = sponsors
+        facets[0]['genders'] = genders
+        facets[0]['start_date'] = sdates
+        del facets[0]['facet']
+
+    return facets
+
 async def create_embeddings(text: str):
     model = SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')
     return model.encode(text).tolist()
