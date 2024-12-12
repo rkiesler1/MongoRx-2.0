@@ -51,6 +51,9 @@ fuzzy = {
     'maxExpansions': 100
 }
 
+################
+# Trial Router #
+################
 @trial_router.get("/", response_description="List all trials")
 async def list_trials(
     request: Request,
@@ -169,6 +172,15 @@ async def search_trials(
                 'filter': [{
                     'exists': { 'path': 'nct_id' }
                 }],
+                'should': [{
+                    'text': {
+                        'query': term,
+                        'path': [
+                            'brief_title',
+                        ],
+                        'score': { 'boost': { 'value': 3 } }
+                    }}
+                ],
                 'must': [{
                     'text': {
                         'query': term,
@@ -200,6 +212,15 @@ async def search_trials(
         '$search': {
             'index': 'default',
             'compound': {
+                'should': [{
+                    'text': {
+                        'query': term,
+                        'path': [
+                            'brief_title',
+                        ],
+                        'score': { 'boost': { 'value': 3 } }
+                    }}
+                ],
                 'must': [{
                     'text': {
                         'query': term,
@@ -412,7 +433,7 @@ async def search_trial_facets(
     compound_operator = { 'compound': {} }
 
     if query_string and len(query_string) > 0:
-        compound_operator.compound.filter = [{
+        compound_operator['compound']['filter'] = [{
             'queryString': {
                 'defaultPath': default_filter_field,
                 'query': query_string
@@ -420,7 +441,7 @@ async def search_trial_facets(
         }]
 
     if term and len(term) > 0:
-        compound_operator.compound.must = [{
+        compound_operator['compound']['must'] = [{
             'text': {
                 'query': term,
                 'path': [
@@ -433,10 +454,10 @@ async def search_trial_facets(
         }]
 
     if range_query:
-        if compound_operator.compound.filter and len(compound_operator.compound.filter) > 0:
-            compound_operator.compound.filter.append(range_query)
+        if compound_operator['compound']['filter'] and len(compound_operator['compound']['filter']) > 0:
+            compound_operator['compound']['filter'].append(range_query)
         else:
-            compound_operator.compound.filter = [range_query]
+            compound_operator['compound']['filter'] = [range_query]
 
     search_facets_with_filters = {
         '$searchMeta': {
@@ -671,6 +692,15 @@ async def search_drugs(
         '$search': {
             'index': 'drugs',
             'compound': {
+                'should': [{
+                    'text': {
+                        'query': term,
+                        'path': [
+                            'openfda.brand_name',
+                        ],
+                        'score': { 'boost': { 'value': 3 } }
+                    }
+                }],
                 'must': [{
                     'text': {
                         'query': term,
@@ -699,6 +729,15 @@ async def search_drugs(
         '$search': {
             'index': 'drugs',
             'compound': {
+                'should': [{
+                    'text': {
+                        'query': term,
+                        'path': [
+                            'openfda.brand_name',
+                        ],
+                        'score': { 'boost': { 'value': 3 } }
+                    }
+                }],
                 'must': [{
                     'text': {
                     'query': term,
@@ -813,6 +852,7 @@ async def autocomplete_drugs(
             '$limit': limit
         },
         drug_autocomplete_project]
+    print(pipeline)
 
     trials = await request.app.mongodb["drug_data"].aggregate(pipeline).to_list(length=limit)
     return trials
