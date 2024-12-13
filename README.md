@@ -1,5 +1,5 @@
-# FARM-starter
-Getting started with FARM (FastAPI, React, &amp; MongoDB) Stack
+# MongoRx 2.0
+Porting [MongoRx](https://github.com/mongodb-developer/MongoRx/tree/main)'s App Services/GraphQL backend to FARM and MongoRx's Angular-based UI to React+[LeafyGreenUI](https://github.com/mongodb/leafygreen-ui)
 
 ## Setup Python Virtual Environment
 
