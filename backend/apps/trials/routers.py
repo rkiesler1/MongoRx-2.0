@@ -37,6 +37,17 @@ trial_project = {
     }
 }
 
+mlt_trial_project = {
+    '$project': {
+        '_id': 0,
+        'nct_id': 1,
+        'brief_title': 1,
+        'start_date': 1,
+        'completion_date': 1,
+        'score': 1,
+    }
+}
+
 trial_autocomplete_project = {
     '$project': {
         '_id': 0,
@@ -194,14 +205,13 @@ async def search_trials(
                     }
                 }]
             },
-            'count': { 'type': 'total' },
+            'count': { 'type': 'total' }
             #'highlight': {
             #    'path': [
             #        'brief_summary',
             #        'detailed_description'
             #    ]
-            #},
-            'tracking': { 'searchTerms': term }
+            #}
         }
     }
 
@@ -249,8 +259,7 @@ async def search_trials(
                     #'official_title',
                     #'detailed_description'
                 #]
-            #},
-            'tracking': { 'searchTerms': term }
+            #}
         }
     }
     
@@ -265,8 +274,7 @@ async def search_trials(
                     }
                 }]
             },
-            'count': { 'type': 'total' },
-            'tracking': { 'searchTerms': query_string }
+            'count': { 'type': 'total' }
         }
     }
     
@@ -316,7 +324,7 @@ async def search_trials(
     else:
         if (use_vector == True):
             # vectorize the search term
-            vector_search['$vectorSearch']['queryVector'] = await create_embeddings(term) #create_openai_embeddings(term, client)
+            vector_search['$vectorSearch']['queryVector'] = await get_cached_embeddings(request, term) #create_openai_embeddings(term, client)
             pipeline.append(vector_search)
         else:
             if query_string != None and len(query_string) > 0:
@@ -336,7 +344,7 @@ async def search_trials(
         pipeline.append({'$skip': skip})
 
     pipeline.extend([add_fields, trial_project])
-    print(pipeline)
+    #print(pipeline)
 
     trials = await request.app.mongodb["trials"].aggregate(pipeline).to_list(length=limit)
 
@@ -478,10 +486,6 @@ async def search_trial_facets(
         }
     }
 
-    add_dields = {
-        '$addFields': { 'count': '$$SEARCH_META.count' }
-    }
-
     pipeline = []
 
     if count_only:
@@ -507,7 +511,7 @@ async def search_trial_facets(
         # no search term or filters provided
         pipeline.append(basic_facets_no_term)
 
-    #print(f"Facet pipeline:", pipeline)
+    print(f"Facet pipeline:", pipeline)
 
     facets = await request.app.mongodb["trials"].aggregate(pipeline).to_list()
 
@@ -545,9 +549,90 @@ async def search_trial_facets(
 
     return facets
 
+@trial_router.post('/mlt', response_description="More Like This search for trials")
+async def mlt_search(
+    request: Request,
+    title: Optional[str] = None,
+    descr: Optional[str] = None,
+    limit: Optional[int] = 12,
+    skip: Optional[int] = 0,
+    use_vector: Optional[bool] = False):
+    
+    mlt_search = {
+        '$search': {
+            'index': 'default',
+            'moreLikeThis': {
+                'like': []
+            },
+        }
+    }
+
+    mlt_vector_search = {
+        '$vectorSearch': {
+            'index': 'trials_vector_index',
+            'queryVector': [],
+            'path': 'detailed_description_vector' if descr else 'brief_summary_vector',
+            'numCandidates': 150,
+            'limit': limit
+        }
+    }
+  
+    if title and len(title.strip()) > 0:
+        if use_vector:
+            mlt_vector_search['$vectorSearch']['queryVector'] = await get_cached_embeddings(request, title)
+        else:
+            mlt_search['$search']['moreLikeThis']['like'].append({"brief_title": title})
+
+    if descr and len(descr.strip()) > 0:
+        if use_vector:
+            mlt_vector_search['$vectorSearch']['queryVector'] = await get_cached_embeddings(request, descr)
+        else:
+            mlt_search['$search']['moreLikeThis']['like'].append({"detailed_description": descr})
+  
+    add_fields = {
+        '$addFields': {
+            'score': {'$meta': 'searchScore'},
+        }
+    }
+
+    if use_vector:
+        add_fields['$addFields']['score'] = { '$meta': 'vectorSearchScore' }
+  
+    pipeline = [mlt_vector_search if use_vector else mlt_search, add_fields, mlt_trial_project]
+    if not use_vector:
+        pipeline.append({'$skip': skip})
+        pipeline.append({'$limit': limit})
+
+    #print(pipeline)
+  
+    trials = await request.app.mongodb["trials"].aggregate(pipeline).to_list()
+    return trials
+  
 async def create_embeddings(text: str):
     model = SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')
     return model.encode(text).tolist()
+
+async def get_cached_embeddings(
+    request: Request,
+    text: str):
+
+    # lookup the query cache
+    lc_text = text.lower()
+    cached_query = await request.app.mongodb["queries"].find_one({"query": lc_text})
+    if cached_query and len(cached_query['vector']) > 0:
+        vector = cached_query['vector']
+        #print(f"Using cached vector: {vector[0:4]}")
+    else:
+        # embed the query
+        vector = await create_embeddings(text)
+        # cache the query vector
+        if len(vector) > 0:
+            inserted = await request.app.mongodb["queries"].insert_one({"query": lc_text, "vector": vector})
+            #print(f"Caching query '{text}' - {inserted.inserted_id}")
+        else:
+            print("create_embedding returned an empty array?")
+
+    return vector
 
 async def create_openai_embeddings(text: str, client: OpenAI):
     response = client.embeddings.create(
@@ -773,8 +858,7 @@ async def search_drugs(
                     'openfda.generic_name',
                     'openfda.manufacturer_name'
                 ]
-            },
-            'tracking': { "searchTerms": term }
+            }
         }
     }
   
@@ -816,8 +900,7 @@ async def search_drugs(
                     'openfda.generic_name', 
                     'openfda.manufacturer_name'
                 ]
-            },
-            'tracking': { 'searchTerms': term }
+            }
         }
     }
 
@@ -833,8 +916,7 @@ async def search_drugs(
                 }]
             },
             'count': { 'type': 'total' },
-        },
-        'tracking': { 'searchTerms': term }
+        }
     }
 
     vector_search = {
@@ -878,7 +960,7 @@ async def search_drugs(
     else:
         if (use_vector == True):
             # vectorize the search term
-            vector_search['$vectorSearch']['queryVector'] = await create_embeddings(term)
+            vector_search['$vectorSearch']['queryVector'] = await get_cached_embeddings(request, term)
             pipeline.append(vector_search)
         else:
             if query_string != None and len(query_string) > 0:
