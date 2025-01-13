@@ -3,6 +3,10 @@ from datetime import date, datetime
 from typing import List, Optional
 from pydantic import BaseModel, Field
 
+class MLTModel(BaseModel):
+    title: Optional[str] = Field(None)
+    description: Optional[str] = Field(None)
+
 class TrialModel(BaseModel):
     brief_summary: str = Field(...)
     brief_title: str = Field(...)

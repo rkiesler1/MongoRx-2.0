@@ -1,4 +1,4 @@
-from .models import TrialModel, DrugModel
+from .models import TrialModel, DrugModel, MLTModel
 from datetime import date, datetime, timedelta
 from fastapi import APIRouter, Body, HTTPException, Request, status, Query
 from fastapi.encoders import jsonable_encoder
@@ -93,6 +93,7 @@ async def show_trial(nct_id: str, request: Request):
     project['gender'] = 1
     project['maximum_age'] = 1
     project['minimum_age'] = 1
+    project['url'] = 1
     project['facility'] = 1
 
     if (trial := await request.app.mongodb["trials"].find_one(
@@ -552,8 +553,7 @@ async def search_trial_facets(
 @trial_router.post('/mlt', response_description="More Like This search for trials")
 async def mlt_search(
     request: Request,
-    title: Optional[str] = None,
-    descr: Optional[str] = None,
+    trial: MLTModel = Body(...),
     limit: Optional[int] = 12,
     skip: Optional[int] = 0,
     use_vector: Optional[bool] = False):
@@ -571,23 +571,23 @@ async def mlt_search(
         '$vectorSearch': {
             'index': 'trials_vector_index',
             'queryVector': [],
-            'path': 'detailed_description_vector' if descr else 'brief_summary_vector',
+            'path': 'detailed_description_vector' if trial.description else 'brief_summary_vector',
             'numCandidates': 150,
             'limit': limit
         }
     }
   
-    if title and len(title.strip()) > 0:
+    if trial.title and len(trial.title.strip()) > 0:
         if use_vector:
-            mlt_vector_search['$vectorSearch']['queryVector'] = await get_cached_embeddings(request, title)
+            mlt_vector_search['$vectorSearch']['queryVector'] = await get_cached_embeddings(request, trial.title)
         else:
-            mlt_search['$search']['moreLikeThis']['like'].append({"brief_title": title})
+            mlt_search['$search']['moreLikeThis']['like'].append({"brief_title": trial.title})
 
-    if descr and len(descr.strip()) > 0:
+    if trial.description and len(trial.description.strip()) > 0:
         if use_vector:
-            mlt_vector_search['$vectorSearch']['queryVector'] = await get_cached_embeddings(request, descr)
+            mlt_vector_search['$vectorSearch']['queryVector'] = await get_cached_embeddings(request, trial.description)
         else:
-            mlt_search['$search']['moreLikeThis']['like'].append({"detailed_description": descr})
+            mlt_search['$search']['moreLikeThis']['like'].append({"detailed_description": trial.description})
   
     add_fields = {
         '$addFields': {
@@ -606,7 +606,7 @@ async def mlt_search(
     #print(pipeline)
   
     trials = await request.app.mongodb["trials"].aggregate(pipeline).to_list()
-    return trials
+    return trials[1:]
   
 async def create_embeddings(text: str):
     model = SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')
